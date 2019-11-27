@@ -1,0 +1,9 @@
+src     CM_Kintex_FW/src/sub_module.vhd 
+src     CM_Kintex_FW/src/misc/types.vhd 
+src     CM_Kintex_FW/src/axiReg/axiRegPkg.vhd 
+src     CM_Kintex_FW/src/axiReg/axiReg.vhd 
+src     CM_Kintex_FW/src/BoardIO/BoardIO.vhd 
+src     CM_Kintex_FW/src/misc/RGB_PWM.vhd 
+src     CM_Kintex_FW/src/misc/LED_PWM.vhd 
+src     CM_Kintex_FW/src/CM_K_info/CM_K_info.vhd 
+

@@ -24,10 +24,10 @@ entity sub_module is
     k_fpga_i2c_scl   : inout std_logic;
     k_fpga_i2c_sda   : inout std_logic;
 
-    ext_AXI_ReadMOSI  :  AXIReadMOSI_t;
-    ext_AXI_ReadMISO  :  AXIReadMISO_t;
-    ext_AXI_WriteMOSI : AXIWriteMOSI_t;
-    ext_AXI_WriteMISO : AXIWriteMISO_t;
+    ext_AXI_ReadMOSI  :  AXIReadMOSI;
+    ext_AXI_ReadMISO  :  AXIReadMISO;
+    ext_AXI_WriteMOSI : AXIWriteMOSI;
+    ext_AXI_WriteMISO : AXIWriteMISO;
     
     -- tri-color LED
     led_red : out std_logic;
