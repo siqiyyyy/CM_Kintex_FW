@@ -45,6 +45,13 @@ EXIT_CODE_INCORRECT_ARGUMENTS = 1
 EXIT_CODE_ARG_PARSING_ERROR   = 2
 EXIT_CODE_NODE_ADDRESS_ERRORS = 3
 
+def findArrayType(n):
+    if n.isArray():
+        print("found array-type reg: "+n.id)
+        print("indices are: "+str(n.entries.keys()))
+    for i in n.children:
+        findArrayType(i)
+    return
 
 
 def main():    
@@ -101,6 +108,9 @@ def main():
             #not implemented yet
             #mytree.generatePkg()
             #mytree.generateRegMap()
+
+            #test array-type
+            findArrayType(mytree.root)
                    
 if __name__ == '__main__':
     main()
