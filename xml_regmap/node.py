@@ -17,9 +17,9 @@ EXIT_CODE_NODE_INCONTINUITY = 4
 class node(object):
     def __init__(self, uhalNode, baseAddress, tree=None, parent=None, index=None):
         self.parent = parent
-        ##### reference to the tree class through parent
         self.tree = tree
-        if self.parent:
+        ##### reference to the tree class through parent
+        if self.parent and not self.tree:
             self.tree = self.parent.tree
         self.children = []
         #####
@@ -47,7 +47,6 @@ class node(object):
     ### usually allow first layer nodes to have different address etc. but require all children to be exactly same
     def isIdentical(self,other,compareAll=False):
         ##### check attributes for the first level
-        if not self.parent == other.parent: return False
         if not self.tree == other.tree: return False
         if not self.permission == other.permission: return False
         if not self.fwinfo == other.fwinfo: return False
