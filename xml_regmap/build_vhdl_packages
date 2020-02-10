@@ -106,11 +106,11 @@ def main():
         if i.count('.') == 0:
             mytree = tree(device.getNode(i), log)
             #not implemented yet
-            #mytree.generatePkg()
+            mytree.generatePkg()
             #mytree.generateRegMap()
 
             #test array-type
-            findArrayType(mytree.root)
+            #findArrayType(mytree.root)
                    
 if __name__ == '__main__':
     main()

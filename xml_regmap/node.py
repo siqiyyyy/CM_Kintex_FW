@@ -1,5 +1,4 @@
 from __future__ import print_function
-
 import getopt
 import sys
 import os.path
@@ -41,8 +40,8 @@ class node(object):
             if not child.checkContinuity(): 
                 self.tree.log.critical("Critical: Attempting to register multiple array type registers but the indices are not continuous!")
                 sys.exit(EXIT_CODE_NODE_INCONTINUITY)
-        ##### sort children by address and id
-        self.children = sorted(self.children, key=lambda child: (child.address, child.id))
+        ##### sort children by address and mask
+        self.children = sorted(self.children, key=lambda child: child.address << 32 + child.mask)
 
     ### usually allow first layer nodes to have different address etc. but require all children to be exactly same
     def isIdentical(self,other,compareAll=False):
@@ -78,6 +77,12 @@ class node(object):
     def isArray(self):
         return self.__class__ == array_node
 
+    def getPath(self):
+        if self.parent:
+            return self.parent.getPath()+'.'+self.id
+        else:
+            return self.id
+
     ### re-implemented in array_node class
     def checkContinuity(self):
         return True
@@ -95,6 +100,13 @@ class node(object):
         except ValueError:
             return -1
         return index
+
+    ### get child by name, return None if no result found
+    def getChild(self, childName):
+        for child in self.children:
+            if child.id == childName:
+                return child
+        return None
         
     @staticmethod
     def readpermission(permission):
@@ -107,8 +119,9 @@ class node(object):
         else:
             return ""
 
-    @staticmethod
-    def getBitRange(mask):
+    def getBitRange(self, mask=None):
+        if not mask:
+            mask = self.mask
         bits = bin(mask)[2:].zfill(32)[::-1]
         start = -1
         end = -1    
@@ -145,6 +158,7 @@ class array_node(node):
     
     def isCompatible(self, new_entry):
         new_index = new_entry.extract_index()
+        ##### TODO: probably should throw an excetion if attempting to add noncompatible array with compatible id?
         if (new_index < 0) or (new_index in self.entries.keys()): return False
         if not self.id == new_entry.id[:new_entry.id.rfind('_')]: return False
         if not self.isIdentical(new_entry): return False 
@@ -183,3 +197,91 @@ class tree(object):
             uhal.setLogLevelTo(uhal.LogLevel.WARNING)
         ##### read the root node
         self.root = node(root,baseAddress=0,tree=self)
+
+    def generateRecord(self, baseName, current_node, members, description):
+        with open(self.outFileName,'a') as outFile:
+            ##### Generate and print a VHDL record
+            array_index_string = ""
+            if current_node.isArray():
+                array_index_string = "arrray(" + str(min(current_node.entries.keys())) + " to " + str(max(current_node.entries.keys()))+") of "
+            outFile.write("  type " + baseName + " is " + array_index_string + "record\n")
+            maxNameLength = 25
+            maxTypeLength = 12
+            ##### TODO: order the members by address
+            sorted_members = sorted(members.items(), key=lambda item: current_node.getChild(item[0]).address<<32 + current_node.getChild(item[0]).mask)
+            for memberName,member in sorted_members:
+                if len(memberName) > maxNameLength:
+                    maxNameLength = len(memberName)
+                if len(member) > maxTypeLength:
+                    maxTypeLength = len(member)
+                outFile.write("    " + memberName + "".ljust(maxNameLength-len(memberName),' ') + "  :")
+                outFile.write((member+';').ljust(maxTypeLength+1,' '))
+                if len(description[memberName]) > 0:
+                    outFile.write("  -- " + description[memberName])
+                outFile.write('\n')
+            outFile.write("  end record " + baseName + ";\n\n")
+            outFile.close()
+        return
+
+    ### Traverse through the tree and generate records in the PKG vhdl
+    ### note the padding is not implemented yet
+    def traverse(self, current_node=None, padding='\t'):
+        if not current_node:
+            current_node = self.root
+        package_mon_entries = dict()
+        package_ctrl_entries = dict()
+        package_description = dict()
+        package_addr_order = dict()
+        for child in current_node.children:
+            if len(child.children) != 0:
+                child_records = self.traverse(child, padding+'\t')
+                package_description[child.id] = ""
+                if child_records.has_key('mon'):
+                    package_mon_entries[child.id] = child.getPath().replace('.','_')+'_MON_t'
+                if child_records.has_key('ctrl'):
+                    package_ctrl_entries[child.id] = child.getPath().replace('.','_') + '_CTRL_t'
+            else:
+                bitCount = bin(child.mask)[2:].count('1')
+                package_entries = ""
+                if child.isArray():
+                    package_entries = "array("+str(min(child.entries.keys())) + ' to ' + str(max(child.entries.keys())) + ') of '
+                if bitCount == 1:
+                    package_entries += "std_logic"
+                else:
+                    package_entries += "std_logic_vector(" + str(bitCount-1).rjust(2,' ') + " downto 0)"
+                
+                package_description[child.id] = child.description
+                bits = child.getBitRange()
+                if child.permission == 'r':
+                    package_mon_entries[child.id] = package_entries
+                else:
+                    package_ctrl_entries[child.id] = package_entries
+        ret = {}
+        if package_mon_entries:
+            baseName = current_node.getPath().replace('.','_')+'_MON_t'
+            ret['mon'] = self.generateRecord(baseName, current_node, package_mon_entries, package_description)
+        if package_ctrl_entries:
+            baseName = current_node.getPath().replace('.','_')+'_CTRL_t'
+            ret['ctrl'] = self.generateRecord(baseName, current_node, package_ctrl_entries, package_description)
+        return ret
+
+    def generatePkg(self, outFileName=None):
+        outFileBase = self.root.id
+        if not outFileName:
+            self.outFileName = outFileBase + "_PKG.vhd"
+        with open(self.outFileName, 'w') as outFile:
+            outFile.write("--This file was auto-generated.\n")
+            outFile.write("--Modifications might be lost.\n")
+            outFile.write("library IEEE;\n")
+            outFile.write("use IEEE.std_logic_1164.all;\n")
+            outFile.write("\n\npackage "+outFileBase+"_CTRL is\n")
+            outFile.close()
+        self.traverse()
+        with open(self.outFileName, 'a') as outFile:
+            outFile.write("\n\nend package "+outFileBase+"_CTRL;")
+            outFile.close()
+        return
+
+    def generateRegMap(self, outFile=None):
+        sys.error("generateRegMap: Not implemented!")
+        return
