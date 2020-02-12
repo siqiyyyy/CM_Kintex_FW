@@ -105,9 +105,8 @@ def main():
     for i in device.getNodes():
         if i.count('.') == 0:
             mytree = tree(device.getNode(i), log)
-            #not implemented yet
             mytree.generatePkg()
-            #mytree.generateRegMap()
+            mytree.generateRegMap()
 
             #test array-type
             #findArrayType(mytree.root)

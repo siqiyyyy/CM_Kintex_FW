@@ -6,6 +6,7 @@ import time
 import logging
 import math
 import uhal
+from string import Template
 
 import StringIO
 EXIT_CODE_INCORRECT_ARGUMENTS = 1
@@ -207,8 +208,7 @@ class tree(object):
             outFile.write("  type " + baseName + " is " + array_index_string + "record\n")
             maxNameLength = 25
             maxTypeLength = 12
-            ##### TODO: order the members by address
-            sorted_members = sorted(members.items(), key=lambda item: current_node.getChild(item[0]).address<<32 + current_node.getChild(item[0]).mask)
+            sorted_members = sorted(members.items(), key=lambda item: (current_node.getChild(item[0]).address<<32) + current_node.getChild(item[0]).mask)
             for memberName,member in sorted_members:
                 if len(memberName) > maxNameLength:
                     maxNameLength = len(memberName)
@@ -254,8 +254,34 @@ class tree(object):
                 bits = child.getBitRange()
                 if child.permission == 'r':
                     package_mon_entries[child.id] = package_entries
-                else:
+                    if self.read_ops.has_key(child.address):
+                        self.read_ops[child.address] = self.read_ops[child.address] + str("localRdData("+bits+")")+" <= Mon."+child.id+"; --"+child.description+"\n"
+                    else:
+                        self.read_ops[child.address] =                           str("localRdData("+bits+")")+" <= Mon."+child.id+"; --"+child.description+"\n"
+                elif child.permission == 'rw':
                     package_ctrl_entries[child.id] = package_entries
+                    if self.read_ops.has_key(child.address):
+                        self.read_ops[child.address] = self.read_ops[child.address] + str("localRdData("+bits+")")+" <= "+"reg_data("+str(child.address).rjust(2)+")("+bits+"); --"+child.description+"\n"
+                    else:
+                        self.read_ops[child.address] =                           str("localRdData("+bits+")")+" <= "+"reg_data("+str(child.address).rjust(2)+")("+bits+"); --"+child.description+"\n"
+                    if self.write_ops.has_key(child.address):
+                        self.write_ops[child.address] = self.write_ops[child.address] + str("reg_data("+str(child.address).rjust(2)+")("+bits+")") + " <= localWrData("+bits+"); --"+child.description+"\n"
+                    else:
+                        self.write_ops[child.address] =                            str("reg_data("+str(child.address).rjust(2)+")("+bits+")") + " <= localWrData("+bits+"); --"+child.description+"\n"
+
+                    self.readwrite_ops+=("Ctrl."+child.id) + " <= reg_data("+str(child.address).rjust(2)+")("+bits+");\n"
+                elif child.permission == 'w':
+                    package_ctrl_entries[child.id] = package_entries
+                    if self.write_ops.has_key(child.address):
+                        self.write_ops[child.address] = self.write_ops[child.address] + ("Ctrl."+child.id) + " <= localWrData("+bits+");\n"
+                    else:                                                     
+                        self.write_ops[child.address] =                            ("Ctrl."+child.id) + " <= localWrData("+bits+");\n"
+                    #determin if this is a vector or a single entry
+                    if bits.find(" ") > 0:
+                        self.action_ops+="Ctrl." + child.id + " <= (others => '0');\n"
+                    else:
+                        self.action_ops+="Ctrl." + child.id + " <= '0';\n"
+
         ret = {}
         if package_mon_entries:
             baseName = current_node.getPath().replace('.','_')+'_MON_t'
@@ -266,8 +292,13 @@ class tree(object):
         return ret
 
     def generatePkg(self, outFileName=None):
+        self.read_ops = dict(list())
+        self.readwrite_ops = str()
+        self.write_ops = dict(list())
+        self.action_ops = str()
         outFileBase = self.root.id
-        if not outFileName:
+        self.outFileName = outFileName
+        if not self.outFileName:
             self.outFileName = outFileBase + "_PKG.vhd"
         with open(self.outFileName, 'w') as outFile:
             outFile.write("--This file was auto-generated.\n")
@@ -282,6 +313,124 @@ class tree(object):
             outFile.close()
         return
 
-    def generateRegMap(self, outFile=None):
-        sys.error("generateRegMap: Not implemented!")
+    @staticmethod
+    def sortByBit(line):
+        assignmentPos = line.find("<=")
+        if assignmentPos < 0:
+            return assignmentPos
+        numberStart = line[0:assignmentPos].rfind("(")+1
+        numberEnd = line[numberStart:assignmentPos].find("downto");
+        if numberEnd < 0:        
+            numberEnd = line[numberStart:assignmentPos].find(")");
+        if numberEnd < 0:
+            return 0
+        numberEnd+=numberStart
+        return int(line[numberStart:numberEnd])
+
+    @staticmethod
+    def generateAlignedCase(operations):
+        output = StringIO.StringIO()
+        newAssignmentPos = 0
+        newAssignmentLength = 0
+        for addr in operations:
+            #find the position of the "<=" in each line so we can align them
+            #find the max length of assignment names so we can align to that as well
+            for line in operations[addr].split('\n'):
+                assignmentPos = line.find("<=")
+                if assignmentPos > newAssignmentPos:
+                    newAssignmentPos = assignmentPos;            
+                assignmentLength = line[assignmentPos:].find(";")
+                if assignmentLength > newAssignmentLength:
+                    newAssignmentLength = assignmentLength;            
+        for addr in operations:
+            output.write("        when x\""+hex(addr)[2:]+"\" =>\n");                    
+            for line in sorted(operations[addr].split('\n'),key = tree.sortByBit):                
+                if line.find("<=") > 0:
+                    preAssignment = line[0:line.find("<=")-1]
+                    line=line[line.find("<=")+2:]
+                    assignment = line[0:line.find(";")]
+                    line=line[line.find(";")+1:]
+                    output.write("          "+
+                             preAssignment.ljust(newAssignmentPos)+
+                             " <= "+
+                             str(assignment+";").ljust(newAssignmentLength)+
+                             "    "+
+                             line+
+                             "\n")
+        return output.getvalue()
+
+    def generate_r_ops_output(self):
+        return self.generateAlignedCase(self.read_ops)
+
+    def generate_w_ops_output(self):
+        return self.generateAlignedCase(self.write_ops)
+
+    def generate_rw_ops_output(self):
+        output = StringIO.StringIO()
+        output.write("  -- Register mapping to ctrl structures\n")
+        newAssignmentPos = 0
+        newAssignmentLength = 0
+        for line in self.readwrite_ops.split("\n"):
+            assignmentPos = line.find("<=")
+            if assignmentPos > newAssignmentPos:
+                newAssignmentPos = assignmentPos;            
+            assignmentLength = line[assignmentPos:].find(";")
+            if assignmentLength > newAssignmentLength:
+                newAssignmentLength = assignmentLength
+        for line in self.readwrite_ops.split("\n"):
+            if line.find("<=") > 0:
+                preAssignment = line[0:line.find("<=")-1]
+                line=line[line.find("<=")+2:]
+                assignment = line[0:line.find(";")]
+                line=line[line.find(";")+1:]
+                output.write("  "+
+                              preAssignment.ljust(newAssignmentPos)+
+                              " <= "+
+                              str(assignment+";").ljust(newAssignmentLength)+
+                              "    "+
+                              line+
+                              "\n")
+        return output.getvalue()
+
+    def generate_a_ops_output(self):
+        output = StringIO.StringIO()
+        for line in self.action_ops.split("\n"):
+            output.write("      "+line+"\n")
+        return output.getvalue()
+
+    ### This should only be called after generatePkg is called
+    def generateRegMap(self, outFileName=None, regMapTemplate="template_map.vhd"):
+        if (not self.read_ops) or (not self.write_ops):
+            self.log.critical("generateRegMap must be called after generatePkg!")
+            return
+        outFileBase = self.root.id
+        if not outFileName:
+            outFileName = outFileBase+"_map.vhd"
+        ##### calculate regMapSize and regAddrRange
+        regMapSize=0
+        if max(self.read_ops,key=int) > regMapSize:
+            regMapSize = max(self.read_ops,key=int)
+        if max(self.write_ops,key=int) > regMapSize:
+            regMapSize = max(self.write_ops,key=int)
+        regAddrRange=str(int(math.floor(math.log(regMapSize,2))))
+        ##### read the template from template file
+        with open(regMapTemplate) as template_input_file:
+            RegMapOutput = template_input_file.read()
+            RegMapOutput = Template(RegMapOutput)
+            template_input_file.close()
+        ##### Substitute keywords in the template
+        substitute_mapping = {
+            "baseName"      : outFileBase,
+            "regMapSize"    : regMapSize,
+            "regAddrRange"  : regAddrRange,
+            "r_ops_output"  : self.generate_r_ops_output(),
+            "rw_ops_output" : self.generate_rw_ops_output(),
+            "a_ops_output"  : self.generate_a_ops_output(),
+            "w_ops_output"  : self.generate_w_ops_output(),
+        }
+        RegMapOutput = RegMapOutput.safe_substitute(substitute_mapping)
+        ##### output to file
+        with open(outFileName,'w') as outFile:
+            outFile.write(RegMapOutput)
+            outFile.close()
         return
